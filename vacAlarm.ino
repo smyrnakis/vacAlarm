@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
-#include <DNSServer.h>
+// #include <ESP8266HTTPClient.h>
+// #include <DNSServer.h>
 #include <ESP8266WebServer.h>
 #include <WiFiManager.h>
 #include <NTPClient.h>
@@ -30,19 +30,23 @@ String httpHeader;
 String serverReply;
 String localIPaddress;
 String formatedTime;
-// short lastRecorderTemp;
 
 int analogValue = 0;
 int analogThreshold = 768; 
-bool movement;
+bool movement = false;
+
 bool allowNtp = true;
-bool allowAutoRemoteLight = true;
-volatile bool allowAutoRemotePIR = true;
+bool allowLightAlarm = true;
+bool allowMovementAlarm = true;
+
+bool wifiAvailable = false;
 
 unsigned long previousMillis = 0;
+unsigned long lastMovementMillis = 0;
+unsigned long movementAlarmDebounce = 30000;
 
 const int uploadInterval = 15000;
-const int sensorsInterval = 6000;
+const int sensorsInterval = 250;
 const int ntpInterval = 2000;
 const int secondInterval = 1000;
 
@@ -60,7 +64,6 @@ WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
 
 
-
 void setup() {
     pinMode(PCBLED, OUTPUT);
     pinMode(ESPLED, OUTPUT);
@@ -69,22 +72,15 @@ void setup() {
     digitalWrite(PCBLED, HIGH);
     digitalWrite(ESPLED, HIGH);
 
-    attachInterrupt(digitalPinToInterrupt(PIR_IN), movementDetected, CHANGE); // LOW
-
-    // randomSeed(analogRead(0));
+    // attachInterrupt(digitalPinToInterrupt(PIR_IN), movementDetected, CHANGE); // LOW
 
     Serial.begin(115200);
     delay(100);
 
     WiFiManager wifiManager;
     // wifiManager.resetSettings();
-    wifiManager.setConfigPortalTimeout(180);  // 180 sec timeout for WiFi configuration
+    wifiManager.setConfigPortalTimeout(30);
     wifiManager.autoConnect(defaultSSID, defaultPASS);
-
-    Serial.println("Connected to WiFi.");
-    Serial.print("IP: ");
-    localIPaddress = (WiFi.localIP()).toString();
-    Serial.println(localIPaddress);
 
     server.on("/", handle_OnConnect);
     server.on("/about", handle_OnConnectAbout);
@@ -95,311 +91,328 @@ void setup() {
 
     timeClient.begin();
 
-    // while (WiFi.waitForConnectResult() != WL_CONNECTED) {
-    //   Serial.println("Connection Failed! Rebooting...");
-    //   delay(5000);
-    //   ESP.restart();
-    // }
-
-    // handle OTA updates
     handleOTA();
     delay(100);
-}
 
-// Send message to AutoRemote
-void sendToAutoRemote(char message[], char deviceKey[], char password[]) {
-  client.stop();
-  if (client.connect(autoRemoteURL,80)) {
-    String url = "/sendmessage?key=";
-    url += (String)deviceKey;
-    url += "&message=";
-    url += (String)message;
-    url += "&sender=";
-    url += "SmyESP-1";
-    url += "&password=";
-    url += (String)password;
+    if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+        wifiAvailable = false;
+        Serial.println("Failed to connect on WiFi network!");
+        Serial.println("Operating offline.");
 
-    client.print(String("GET ") + url + " HTTP/1.1\r\n" +
-               "Host: " + autoRemoteURL + "\r\n" +
-               "Connection: close\r\n\r\n");
-    // Timeout 5 sec
-    unsigned long timeout = millis();
-    while (client.available() == 0) {
-      if (millis() - timeout > 5000) {
-        client.stop();
-        Serial.println("ERROR: could not send message to AutoRemote!");
-        return;
-      }
+        // ESP8266WebServer server(8080);
+        // server.begin();
+        // Serial.println("\r\nHTTP server starter on port 8080.");
+    }
+    else {
+        wifiAvailable = true;
+        Serial.println("Connected to WiFi.");
+        Serial.print("IP: ");
+        localIPaddress = (WiFi.localIP()).toString();
+        Serial.println(localIPaddress);
+
+        // server.begin();
+        // Serial.println("\r\nHTTP server starter on port 80.");
     }
 
-    while (client.available()) {
-        serverReply = client.readStringUntil('\r');
-    }
-      
-    serverReply.trim();
-    client.stop();
-    // Serial.println("Data uploaded to thingspeak!");
-  }
-  else {
-    Serial.println("ERROR: could not send data to AutoRemote!");
-  }
+    delay(100);
 }
 
 // OTA code update
 void handleOTA() {
-  // Port defaults to 8266
-  // ArduinoOTA.setPort(8266);
+    // Port defaults to 8266
+    // ArduinoOTA.setPort(8266);
 
-  // Hostname defaults to esp8266-[ChipID]
-  ArduinoOTA.setHostname("SmyESP-1");
+    // Hostname defaults to esp8266-[ChipID]
+    ArduinoOTA.setHostname("SmyESP-1");
 
-  ArduinoOTA.setPassword((const char *)otaAuthPin);
+    ArduinoOTA.setPassword((const char *)otaAuthPin);
 
-  ArduinoOTA.onStart([]() {
-    Serial.println("Start");
-  });
-  ArduinoOTA.onEnd([]() {
-    Serial.println("\nEnd");
-  });
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-  });
-  ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("Error[%u]: ", error);
-    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-    else if (error == OTA_END_ERROR) Serial.println("End Failed");
-  });
-  ArduinoOTA.begin();
+    ArduinoOTA.onStart([]() {
+        Serial.println("Start");
+    });
+    ArduinoOTA.onEnd([]() {
+        Serial.println("\nEnd");
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    });
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("Error[%u]: ", error);
+        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+        else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+    ArduinoOTA.begin();
+}
+
+// Send message to AutoRemote
+void sendToAutoRemote(char message[], char deviceKey[], char password[]) {
+    if (wifiAvailable) {
+        digitalWrite(ESPLED, LOW);
+        client.stop();
+        if (client.connect(autoRemoteURL,80)) {
+            String url = "/sendmessage?key=";
+            url += (String)deviceKey;
+            url += "&message=";
+            url += (String)message;
+            url += "&sender=";
+            url += "vacAlarm";
+            url += "&password=";
+            url += (String)password;
+
+            client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+                    "Host: " + autoRemoteURL + "\r\n" +
+                    "Connection: close\r\n\r\n");
+            // Timeout 5 sec
+            unsigned long timeout = millis();
+            while (client.available() == 0) {
+            if (millis() - timeout > 5000) {
+                client.stop();
+                Serial.println("ERROR: could not send message to AutoRemote!");
+                return;
+            }
+            }
+
+            while (client.available()) {
+                serverReply = client.readStringUntil('\r');
+            }
+            
+            serverReply.trim();
+            client.stop();
+            // Serial.println("Message sent to AutoRemote!");
+        }
+        else {
+            Serial.println("ERROR: could not send data to AutoRemote!");
+        }
+        digitalWrite(ESPLED, HIGH);
+    }
 }
 
 // Sending data to Thingspeak
-void thingSpeakRequest() {
-  client.stop();
-  if (client.connect(thinkSpeakAPIurl,80)) 
-  {
-    String postStr = apiKey;
-    postStr +="&field1=";
-    postStr += String(temperature);
-    postStr +="&field2=";
-    postStr += String(humidity);
-    postStr +="&field3=";
-    postStr += String(analogValue);
-    // postStr +="&field4=";
-    // postStr += String(movement);
-    postStr += "\r\n\r\n";
+void thingSpeakRequest(int lightLevel, bool movementStatus) {
+    if (wifiAvailable) {
+        digitalWrite(ESPLED, LOW);
+        client.stop();
+        if (client.connect(thinkSpeakAPIurl,80)) 
+        {
+            String postStr = apiKey;
+            postStr +="&field1=";
+            postStr += String(lightLevel);
+            postStr +="&field2=";
+            postStr += String(movementStatus);
+            // postStr +="&field3=";
+            // postStr += String(pingTime);
+            // postStr +="&field4=";
+            // postStr += String(movement);
+            postStr += "\r\n\r\n";
 
-    client.print("POST /update HTTP/1.1\n");
-    client.print("Host: api.thingspeak.com\n");
-    client.print("Connection: close\n");
-    client.print("X-THINGSPEAKAPIKEY: " + (String)apiKey + "\n");
-    client.print("Content-Type: application/x-www-form-urlencoded\n");
-    client.print("Content-Length: ");
-    client.print(postStr.length());
-    client.print("\n\n");
-    client.print(postStr);
-    client.stop();
-    // Serial.println("Data uploaded to thingspeak!");
-  }
-  else {
-    Serial.println("ERROR: could not upload data to thingspeak!");
-  }
+            client.print("POST /update HTTP/1.1\n");
+            client.print("Host: api.thingspeak.com\n");
+            client.print("Connection: close\n");
+            client.print("X-THINGSPEAKAPIKEY: " + (String)apiKey + "\n");
+            client.print("Content-Type: application/x-www-form-urlencoded\n");
+            client.print("Content-Length: ");
+            client.print(postStr.length());
+            client.print("\n\n");
+            client.print(postStr);
+            client.stop();
+            // Serial.println("Data uploaded to thingspeak!");
+        }
+        else {
+            Serial.println("ERROR: could not upload data to thingspeak!");
+        }
+        digitalWrite(ESPLED, HIGH);
+    }
 }
 
 // Handle HTML page calls
 void handle_OnConnect() {
-  digitalWrite(ESPLED, LOW);
-  getSensorData();
-  server.send(200, "text/html", HTMLpresentData());
-  digitalWrite(ESPLED, HIGH);
+    digitalWrite(ESPLED, LOW);
+    server.send(200, "text/html", HTMLpresentData(analogValue, movement));
+    digitalWrite(ESPLED, HIGH);
 }
 
 void handle_OnConnectAbout() {
-  digitalWrite(ESPLED, LOW);
-  server.send(200, "text/plain", "A smart vacation alarm system! (C) Apostolos Smyrnakis");
-  digitalWrite(ESPLED, HIGH);
+    digitalWrite(ESPLED, LOW);
+    server.send(200, "text/plain", "A smart vacation alarm system! (C) Apostolos Smyrnakis");
+    digitalWrite(ESPLED, HIGH);
 }
 
 void handle_NotFound(){
-  server.send(404, "text/html", HTMLnotFound());
+    server.send(404, "text/html", HTMLnotFound());
 }
 
 // HTML pages structure
-String HTMLpresentData(){
-  String ptr = "<!DOCTYPE html> <html>\n";
-  ptr +="<meta http-equiv=\"refresh\" content=\"5\" >\n";
-  ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
-  ptr +="<title>RJD Monitor</title>\n";
-  ptr +="<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}\n";
-  ptr +="body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;}\n";
-  ptr +="p {font-size: 24px;color: #444444;margin-bottom: 10px;}\n";
-  ptr +="</style>\n";
-  ptr +="</head>\n";
-  ptr +="<body>\n";
-  ptr +="<div id=\"webpage\">\n";
-  ptr +="<h1>RJD Monitor</h1>\n";
-  
-  ptr +="<p>Local IP: ";
-  ptr += (String)localIPaddress;
-  ptr +="</p>";
+String HTMLpresentData(int lightLvl, bool movementStatus){
+    String ptr = "<!DOCTYPE html> <html>\n";
+    ptr +="<meta http-equiv=\"refresh\" content=\"6\" >\n";
+    ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
+    ptr +="<title>vacAlarm</title>\n";
+    ptr +="<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}\n";
+    ptr +="body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;}\n";
+    ptr +="p {font-size: 24px;color: #444444;margin-bottom: 10px;}\n";
+    ptr +="</style>\n";
+    ptr +="</head>\n";
+    ptr +="<body>\n";
+    ptr +="<div id=\"webpage\">\n";
+    ptr +="<h1>vacAlarm</h1>\n";
+    
+    ptr +="<p>Local IP: ";
+    ptr += (String)localIPaddress;
+    ptr +="</p>";
 
-  ptr +="<p>Temperature: ";
-  ptr +=(String)temperature;
-  ptr +="&#176C</p>"; // '°' is '&#176' in HTML
-  ptr +="<p>Humidity: ";
-  ptr +=(String)humidity;
-  ptr +="%</p>";
-  ptr +="<p>IR sensor: ";
-  ptr +=(String)analogValue;
-  ptr +="%</p>";
-  ptr += "<p>Timestamp: ";
-  ptr +=(String)formatedTime;
-  ptr += "</p>";
+    ptr +="<p>Light level: ";
+    ptr +=(String)lightLvl;
+    // ptr +="&#176C</p>"; // '°' is '&#176' in HTML
+    ptr +=" [0-1024]";
+    ptr +="<p>Movement: ";
+    ptr +=(String)movementStatus;
+    ptr +=" [0/1]</p>";
+    // ptr +="<p>Ping: ";
+    // ptr +=(String)analogValue;
+    // ptr +="ms</p>";
+    ptr += "<p>Timestamp: ";
+    ptr +=(String)formatedTime;
+    ptr += "</p>";
 
-  // ptr +="<p>Last recorder temp: ";
-  // ptr +=(String)lastRecorderTemp;
-  // ptr +="&#176C</p>";
-  
-  ptr +="</div>\n";
-  ptr +="</body>\n";
-  ptr +="</html>\n";
-  return ptr;
+    // ptr +="<p>Last recorder temp: ";
+    // ptr +=(String)lastRecorderTemp;
+    // ptr +="&#176C</p>";
+    
+    ptr +="</div>\n";
+    ptr +="</body>\n";
+    ptr +="</html>\n";
+    return ptr;
 }
 
 String HTMLnotFound(){
-  String ptr = "<!DOCTYPE html> <html>\n";
-  ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
-  ptr +="<title>RJD Monitor</title>\n";
-  ptr +="<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}\n";
-  ptr +="body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;}\n";
-  ptr +="p {font-size: 24px;color: #444444;margin-bottom: 10px;}\n";
-  ptr +="</style>\n";
-  ptr +="</head>\n";
-  ptr +="<body>\n";
-  ptr +="<div id=\"webpage\">\n";
-  ptr +="<h1>You know this 404 thing ?</h1>\n";
-  ptr +="<p>What you asked can not be found... :'( </p>";
-  ptr +="</div>\n";
-  ptr +="</body>\n";
-  ptr +="</html>\n";
-  return ptr;
-}
-
-// Read all sensors
-void getSensorData() {
-  //temperature  = random(10, 21);
-  //humidity  = random(65, 85);
-  movement = random(0, 2);
-  // analogValue = analogRead(ANLG_IN);
-  // analogValue = map(analogValue, 0, 1024, 1024, 0);
+    String ptr = "<!DOCTYPE html> <html>\n";
+    ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
+    ptr +="<title>RJD Monitor</title>\n";
+    ptr +="<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}\n";
+    ptr +="body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;}\n";
+    ptr +="p {font-size: 24px;color: #444444;margin-bottom: 10px;}\n";
+    ptr +="</style>\n";
+    ptr +="</head>\n";
+    ptr +="<body>\n";
+    ptr +="<div id=\"webpage\">\n";
+    ptr +="<h1>You know this 404 thing ?</h1>\n";
+    ptr +="<p>What you asked can not be found... :'( </p>";
+    ptr +="</div>\n";
+    ptr +="</body>\n";
+    ptr +="</html>\n";
+    return ptr;
 }
 
 // Get the time
 void pullNTPtime(bool printData) {
-  timeClient.update();
-  formatedTime = timeClient.getFormattedTime();
+    if (wifiAvailable) {
+        timeClient.update();
+        formatedTime = timeClient.getFormattedTime();
 
-  if (printData) {
-    // Serial.print(daysOfTheWeek[timeClient.getDay()]);
-    // Serial.print(", ");
-    // Serial.print(timeClient.getHours());
-    // Serial.print(":");
-    // Serial.print(timeClient.getMinutes());
-    // Serial.print(":");
-    // Serial.println(timeClient.getSeconds());
-    Serial.println(timeClient.getFormattedTime()); // format time like 23:05:00
-  }
+        if (printData) {
+            // Serial.print(daysOfTheWeek[timeClient.getDay()]);
+            // Serial.print(", ");
+            // Serial.print(timeClient.getHours());
+            // Serial.print(":");
+            // Serial.print(timeClient.getMinutes());
+            // Serial.print(":");
+            // Serial.println(timeClient.getSeconds());
+            Serial.println(timeClient.getFormattedTime()); // format time like 23:05:00
+        }
+    }
 }
 
 // Serial print data
-void serialPrintAll() {
-  Serial.println(timeClient.getFormattedTime());
-  Serial.print("Temperature: ");
-  Serial.print(String(temperature));
-  Serial.println("°C");
-  Serial.print("Humidity: ");
-  Serial.print(String(humidity));
-  Serial.println("%");
-  Serial.print("IR value: ");
-  Serial.print(String(analogValue));
-  Serial.println(" [0-1024]");
-  Serial.println();
+void serialPrintAll(int lightLevel, bool movementStatus) {
+    Serial.println(timeClient.getFormattedTime());
+    Serial.print("Light level: ");
+    Serial.print(String(lightLevel));
+    Serial.println(" [0-1024]");
+    Serial.print("Movement: ");
+    Serial.print(String(movementStatus));
+    Serial.println(" [0/1]");
+    // Serial.print("Ping time: ");
+    // Serial.print(String(pingTime));
+    // Serial.println(" ms");
+    Serial.println();
 }
-
-
-//
-void movementDetected() {
-
-}
-
 
 void loop(){
-  // Handle OTA firmware updates
-  ArduinoOTA.handle();
+    ArduinoOTA.handle();
+    server.handleClient();
 
-  unsigned long currentMillis = millis();
+    unsigned long currentMillis = millis();
 
-  // check light level every 100ms
-  if (currentMillis % 100 == 0) {
-    analogValue = analogRead(ANLG_IN);
-    analogValue = map(analogValue, 0, 1024, 1024, 0);
+    // read sensors
+    if (currentMillis % sensorsInterval == 0) {
+        analogValue = analogRead(ANLG_IN);
+        analogValue = map(analogValue, 0, 1024, 1024, 0);
+        // Serial.println(analogValue);
 
+        movement = digitalRead(PIR_IN);
+        // Serial.println(movement);
+    }
+
+    // handle LEDs
+    if (movement) {
+      digitalWrite(PCBLED, LOW);
+    }
+    else {
+      digitalWrite(PCBLED, HIGH);
+    }
     // if (analogValue > analogThreshold) {
     //   digitalWrite(PCBLED, LOW);
     // }
     // else {
     //   digitalWrite(PCBLED, HIGH);
     // }
-    if ((analogValue > analogThreshold) && allowAutoRemoteLight) {
-      Serial.print("WARNING: light detected! (");
-      Serial.print(analogValue);
-      Serial.println("/1024)");
-      sendToAutoRemote("vacAlarm_light-detected", autoRemotePlus6, autoRemotePass);
-      allowAutoRemoteLight = false;
+
+    // AutoRemote report
+    if ((analogValue > analogThreshold) && allowLightAlarm) {
+        Serial.print("WARNING: light detected! (");
+        Serial.print(analogValue);
+        Serial.println("/1024)\r\n");
+        sendToAutoRemote("vacAlarm_light-detected", autoRemotePlus6, autoRemotePass);
+        allowLightAlarm = false;
     }
-    if ((analogValue < analogThreshold) && !allowAutoRemoteLight) {
-      allowAutoRemoteLight = true;
+    if ((analogValue < analogThreshold) && !allowLightAlarm) {
+        allowLightAlarm = true;
     }
-  }
 
+    if (movement && allowMovementAlarm) {
+        Serial.println("WARNING: movement detected!\r\n");
+        sendToAutoRemote("vacAlarm_movement-detected", autoRemotePlus6, autoRemotePass);
+        allowMovementAlarm = false;
+        lastMovementMillis = millis();
+    }
+    if ((currentMillis >= (lastMovementMillis + movementAlarmDebounce)) && !allowMovementAlarm) {
+        allowMovementAlarm = true;
+    }
 
-  // pull the time
-  if ((currentMillis % ntpInterval == 0) && (allowNtp)) {
-    // Serial.println("Pulling NTP...");
-    pullNTPtime(false);
-    allowNtp = false;
-  }
+    // pull the time
+    if ((currentMillis % ntpInterval == 0) && allowNtp && wifiAvailable) {
+        pullNTPtime(false);
+        allowNtp = false;
+    }
 
-  // pull sensor data
-  if (currentMillis % sensorsInterval == 0) {
-    // Serial.println("Reading sensor data...");
-    getSensorData();
-  }
+    // upload data to ThingSpeak
+    if (currentMillis % uploadInterval == 0) {
+        serialPrintAll(analogValue, movement);
+        thingSpeakRequest(analogValue, movement);
+    }
 
-  // upload data to ThingSpeak
-  if (currentMillis % uploadInterval == 0) {
-    // Serial.println("Uploading to thingspeak...");
-    digitalWrite(ESPLED, LOW);
-    getSensorData();
+    // debounce per second
+    if (currentMillis % secondInterval == 0) {
+        allowNtp = true;
+    }
 
-    // Upload data to thingSpeak
-    thingSpeakRequest();
-
-    // Upload data to beehive
-    thingSpeakRequestBeeHive();\
-
-    serialPrintAll();
-    digitalWrite(ESPLED, HIGH);
-  }
-
-  // debounce per second
-  if (currentMillis % secondInterval == 0) {
-    // debounce for NTP calls
-    allowNtp = true;
-  }
-
-  // handle HTTP connections
-  server.handleClient();
+    // // reboot device if no WiFi connection
+    // while (WiFi.waitForConnectResult() != WL_CONNECTED) {
+    //     Serial.println("Connection Failed! Rebooting in 5 sec...");
+    //     delay(5000);
+    //     ESP.restart();
+    // }
 }
