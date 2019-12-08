@@ -79,7 +79,7 @@ void setup() {
 
     WiFiManager wifiManager;
     // wifiManager.resetSettings();
-    wifiManager.setConfigPortalTimeout(30);
+    wifiManager.setConfigPortalTimeout(120);
     wifiManager.autoConnect(defaultSSID, defaultPASS);
 
     server.on("/", handle_OnConnect);
@@ -123,7 +123,7 @@ void handleOTA() {
     // ArduinoOTA.setPort(8266);
 
     // Hostname defaults to esp8266-[ChipID]
-    ArduinoOTA.setHostname("SmyESP-1");
+    ArduinoOTA.setHostname("vacAlarm");
 
     ArduinoOTA.setPassword((const char *)otaAuthPin);
 
@@ -202,10 +202,6 @@ void thingSpeakRequest(int lightLevel, bool movementStatus) {
             postStr += String(lightLevel);
             postStr +="&field2=";
             postStr += String(movementStatus);
-            // postStr +="&field3=";
-            // postStr += String(pingTime);
-            // postStr +="&field4=";
-            // postStr += String(movement);
             postStr += "\r\n\r\n";
 
             client.print("POST /update HTTP/1.1\n");
@@ -265,21 +261,13 @@ String HTMLpresentData(int lightLvl, bool movementStatus){
 
     ptr +="<p>Light level: ";
     ptr +=(String)lightLvl;
-    // ptr +="&#176C</p>"; // '°' is '&#176' in HTML
     ptr +=" [0-1024]";
     ptr +="<p>Movement: ";
     ptr +=(String)movementStatus;
     ptr +=" [0/1]</p>";
-    // ptr +="<p>Ping: ";
-    // ptr +=(String)analogValue;
-    // ptr +="ms</p>";
     ptr += "<p>Timestamp: ";
     ptr +=(String)formatedTime;
     ptr += "</p>";
-
-    // ptr +="<p>Last recorder temp: ";
-    // ptr +=(String)lastRecorderTemp;
-    // ptr +="&#176C</p>";
     
     ptr +="</div>\n";
     ptr +="</body>\n";
@@ -334,8 +322,6 @@ void serialPrintAll(int lightLevel, bool movementStatus) {
     Serial.print("Movement: ");
     Serial.print(String(movementStatus));
     Serial.println(" [0/1]");
-    // Serial.print("Ping time: ");
-    // Serial.print(String(pingTime));
     // Serial.println(" ms");
     Serial.println();
 }
@@ -350,32 +336,22 @@ void loop(){
     if (currentMillis % sensorsInterval == 0) {
         analogValue = analogRead(ANLG_IN);
         analogValue = map(analogValue, 0, 1024, 1024, 0);
-        // Serial.println(analogValue);
-
         movement = digitalRead(PIR_IN);
+
+        // Serial.println(analogValue);
         // Serial.println(movement);
     }
 
     // handle LEDs
-    if (movement) {
-      digitalWrite(PCBLED, LOW);
-    }
-    else {
-      digitalWrite(PCBLED, HIGH);
-    }
-    // if (analogValue > analogThreshold) {
-    //   digitalWrite(PCBLED, LOW);
-    // }
-    // else {
-    //   digitalWrite(PCBLED, HIGH);
-    // }
+    (movement) ? digitalWrite(PCBLED, LOW) : digitalWrite(PCBLED, HIGH);
+    // (analogValue > analogThreshold) ? digitalWrite(PCBLED, LOW) : digitalWrite(PCBLED, HIGH);
 
     // AutoRemote report
     if ((analogValue > analogThreshold) && allowLightAlarm) {
         Serial.print("WARNING: light detected! (");
         Serial.print(analogValue);
         Serial.println("/1024)\r\n");
-        sendToAutoRemote("vacAlarm_light-detected", autoRemotePlus6, autoRemotePass);
+        sendToAutoRemote("alarm_light", autoRemotePlus6, autoRemotePass);
         allowLightAlarm = false;
     }
     if ((analogValue < analogThreshold) && !allowLightAlarm) {
@@ -384,7 +360,7 @@ void loop(){
 
     if (movement && allowMovementAlarm) {
         Serial.println("WARNING: movement detected!\r\n");
-        sendToAutoRemote("vacAlarm_movement-detected", autoRemotePlus6, autoRemotePass);
+        sendToAutoRemote("alarm_movement", autoRemotePlus6, autoRemotePass);
         allowMovementAlarm = false;
         lastMovementMillis = millis();
     }
@@ -409,10 +385,10 @@ void loop(){
         allowNtp = true;
     }
 
-    // // reboot device if no WiFi connection
-    // while (WiFi.waitForConnectResult() != WL_CONNECTED) {
-    //     Serial.println("Connection Failed! Rebooting in 5 sec...");
-    //     delay(5000);
-    //     ESP.restart();
-    // }
+    // reboot device if no WiFi connection
+    if ((currentMillis > 3600000) && (!wifiAvailable)) {
+        Serial.println("No WiFi connection. Rebooting in 5 sec...");
+        delay(5000);
+        ESP.restart();
+    }
 }
