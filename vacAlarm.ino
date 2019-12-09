@@ -256,19 +256,23 @@ String HTMLpresentData(int lightLvl, bool movementStatus){
     ptr +="<div id=\"webpage\">\n";
     ptr +="<h1>vacAlarm</h1>\n";
     
-    ptr +="<p>Local IP: ";
+    ptr +="<p><b>Local IP:</b> ";
     ptr += (String)localIPaddress;
     ptr +="</p>";
 
-    ptr +="<p>Light level: ";
+    ptr +="<p><b>Light level:</b> ";
     ptr +=(String)lightLvl;
     ptr +=" [0-1024]";
-    ptr +="<p>Movement: ";
+    ptr +="<p><b>Movement:</b> ";
     ptr +=(String)movementStatus;
     ptr +=" [0/1]</p>";
-    ptr += "<p>Timestamp: ";
+    ptr += "<p><b>Timestamp:</b> ";
     ptr +=(String)formatedTime;
     ptr += "</p>";
+    ptr +="<p></p>";
+    ptr +="<p><i><b>Light level threshold:</b> ";
+    ptr +=(String)analogThreshold;
+    ptr += "</i></p>";
     
     ptr +="</div>\n";
     ptr +="</body>\n";
@@ -344,7 +348,8 @@ void loop(){
     }
 
     // handle LEDs
-    (movement) ? digitalWrite(PCBLED, LOW) : digitalWrite(PCBLED, HIGH);
+    digitalWrite(PCBLED, !movement);
+    // (movement) ? digitalWrite(PCBLED, LOW) : digitalWrite(PCBLED, HIGH);
     // (analogValue > analogThreshold) ? digitalWrite(PCBLED, LOW) : digitalWrite(PCBLED, HIGH);
 
     // AutoRemote report
@@ -386,7 +391,7 @@ void loop(){
         allowNtp = true;
     }
 
-    // reboot device if no WiFi connection
+    // reboot device if no WiFi for 1 hour
     if ((currentMillis > 3600000) && (!wifiAvailable)) {
         Serial.println("No WiFi connection. Rebooting in 5 sec...");
         delay(5000);
