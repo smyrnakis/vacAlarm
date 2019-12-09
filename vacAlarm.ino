@@ -35,6 +35,7 @@ int analogValue = 0;
 int analogThreshold = 768; 
 bool movement = false;
 
+bool noAuRe_ThSp = false;
 bool allowNtp = true;
 bool allowLightAlarm = true;
 bool allowMovementAlarm = true;
@@ -149,7 +150,7 @@ void handleOTA() {
 
 // Send message to AutoRemote
 void sendToAutoRemote(char message[], char deviceKey[], char password[]) {
-    if (wifiAvailable) {
+    if (wifiAvailable && !noAuRe_ThSp) {
         digitalWrite(ESPLED, LOW);
         client.stop();
         if (client.connect(autoRemoteURL,80)) {
@@ -168,11 +169,11 @@ void sendToAutoRemote(char message[], char deviceKey[], char password[]) {
             // Timeout 5 sec
             unsigned long timeout = millis();
             while (client.available() == 0) {
-            if (millis() - timeout > 5000) {
-                client.stop();
-                Serial.println("ERROR: could not send message to AutoRemote!");
-                return;
-            }
+                if (millis() - timeout > 5000) {
+                    client.stop();
+                    Serial.println("ERROR: could not send message to AutoRemote!");
+                    return;
+                }
             }
 
             while (client.available()) {
@@ -192,7 +193,7 @@ void sendToAutoRemote(char message[], char deviceKey[], char password[]) {
 
 // Sending data to Thingspeak
 void thingSpeakRequest(int lightLevel, bool movementStatus) {
-    if (wifiAvailable) {
+    if (wifiAvailable && !noAuRe_ThSp) {
         digitalWrite(ESPLED, LOW);
         client.stop();
         if (client.connect(thinkSpeakAPIurl,80)) 
