@@ -34,6 +34,7 @@ String formatedTime;
 int analogValue = 0;
 int analogThreshold = 768; 
 bool movement = false;
+bool tempMove = false;
 
 bool noAuRe_ThSp = false;
 bool allowNtp = true;
@@ -115,7 +116,7 @@ void setup() {
         // Serial.println("\r\nHTTP server starter on port 80.");
     }
 
-    delay(100);
+    delay(5000);
 }
 
 // OTA code update
@@ -342,9 +343,10 @@ void loop(){
         analogValue = analogRead(ANLG_IN);
         analogValue = map(analogValue, 0, 1024, 1024, 0);
         movement = digitalRead(PIR_IN);
+    }
 
-        // Serial.println(analogValue);
-        // Serial.println(movement);
+    if (movement) {
+        tempMove = true;
     }
 
     // handle LEDs
@@ -382,8 +384,9 @@ void loop(){
 
     // upload data to ThingSpeak
     if (currentMillis % uploadInterval == 0) {
-        serialPrintAll(analogValue, movement);
-        thingSpeakRequest(analogValue, movement);
+        serialPrintAll(analogValue, tempMove);
+        thingSpeakRequest(analogValue, tempMove);
+        tempMove = false;
     }
 
     // debounce per second
@@ -391,8 +394,8 @@ void loop(){
         allowNtp = true;
     }
 
-    // reboot device if no WiFi for 1 hour
-    if ((currentMillis > 3600000) && (!wifiAvailable)) {
+    // reboot device if no WiFi for 5 minutes (1h : 3600000)
+    if ((currentMillis > 300000) && (!wifiAvailable)) {
         Serial.println("No WiFi connection. Rebooting in 5 sec...");
         delay(5000);
         ESP.restart();
