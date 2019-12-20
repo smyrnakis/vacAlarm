@@ -7,6 +7,7 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
+#include <ESP8266Ping.h>
 #include "secrets.h"
 
 #define PCBLED D0 // 16 , LED_BUILTIN
@@ -22,6 +23,7 @@ char apiKey[] = THINGSP_WR_APIKEY;
 char autoRemoteMac[] = AUTOREM_MAC;
 char autoRemotePlus6[] = AUTOREM_PLUS6;
 char autoRemotePass[] = AUTOREM_PASS;
+char autoRemoteTTL[] = "15";
 
 char otaAuthPin[] = OTA_AUTH_PIN;
 
@@ -31,11 +33,13 @@ String serverReply;
 String localIPaddress;
 String formatedTime;
 
-int analogValue = 0;
-int analogThreshold = 768; 
 bool movement = false;
 bool tempMove = false;
+int analogValue = 0;
+int analogThreshold = 10; 
 
+bool pingResult = true;
+bool connectionLost = false;
 bool noAuRe_ThSp = false;
 bool allowNtp = true;
 bool allowLightAlarm = true;
@@ -43,7 +47,8 @@ bool allowMovementAlarm = true;
 
 bool wifiAvailable = false;
 
-unsigned long previousMillis = 0;
+unsigned long lastPingTime = 0;
+unsigned long connectionLostTime = 0;
 unsigned long lastMovementMillis = 0;
 unsigned long movementAlarmDebounce = 30000;
 
@@ -119,7 +124,6 @@ void setup() {
     delay(5000);
 }
 
-// OTA code update
 void handleOTA() {
     // Port defaults to 8266
     // ArduinoOTA.setPort(8266);
@@ -149,7 +153,27 @@ void handleOTA() {
     ArduinoOTA.begin();
 }
 
-// Send message to AutoRemote
+bool pingStatus() {
+    lastPingTime = millis();
+
+    IPAddress ipThingSpeak (184, 106, 153, 149);
+    IPAddress ipGoogle (8, 8, 8, 8);
+
+    bool pingRet;    
+    pingRet = Ping.ping(ipThingSpeak);
+
+    if (pingRet) {
+        return true;
+    } else {
+        pingRet = Ping.ping(ipGoogle);
+
+        if (pingRet) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void sendToAutoRemote(char message[], char deviceKey[], char password[]) {
     if (wifiAvailable && !noAuRe_ThSp) {
         digitalWrite(ESPLED, LOW);
@@ -163,6 +187,8 @@ void sendToAutoRemote(char message[], char deviceKey[], char password[]) {
             url += "vacAlarm";
             url += "&password=";
             url += (String)password;
+            url += "&ttl=";
+            url += (String)autoRemoteTTL;
 
             client.print(String("GET ") + url + " HTTP/1.1\r\n" +
                     "Host: " + autoRemoteURL + "\r\n" +
@@ -192,7 +218,6 @@ void sendToAutoRemote(char message[], char deviceKey[], char password[]) {
     }
 }
 
-// Sending data to Thingspeak
 void thingSpeakRequest(int lightLevel, bool movementStatus) {
     if (wifiAvailable && !noAuRe_ThSp) {
         digitalWrite(ESPLED, LOW);
@@ -225,7 +250,6 @@ void thingSpeakRequest(int lightLevel, bool movementStatus) {
     }
 }
 
-// Handle HTML page calls
 void handle_OnConnect() {
     digitalWrite(ESPLED, LOW);
     server.send(200, "text/html", HTMLpresentData(analogValue, movement));
@@ -242,7 +266,6 @@ void handle_NotFound(){
     server.send(404, "text/html", HTMLnotFound());
 }
 
-// HTML pages structure
 String HTMLpresentData(int lightLvl, bool movementStatus){
     String ptr = "<!DOCTYPE html> <html>\n";
     ptr +="<meta http-equiv=\"refresh\" content=\"6\" >\n";
@@ -300,7 +323,6 @@ String HTMLnotFound(){
     return ptr;
 }
 
-// Get the time
 void pullNTPtime(bool printData) {
     if (wifiAvailable) {
         timeClient.update();
@@ -319,7 +341,6 @@ void pullNTPtime(bool printData) {
     }
 }
 
-// Serial print data
 void serialPrintAll(int lightLevel, bool movementStatus) {
     Serial.println(timeClient.getFormattedTime());
     Serial.print("Light level: ");
@@ -400,4 +421,5 @@ void loop(){
         delay(5000);
         ESP.restart();
     }
+
 }
