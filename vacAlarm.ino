@@ -36,26 +36,28 @@ String formatedTime;
 bool movement = false;
 bool tempMove = false;
 int analogValue = 0;
-int analogThreshold = 10; 
+int analogThreshold = 40; 
 
+bool noAuRe_ThSp = false;       // for debugging
 bool pingResult = true;
+bool wifiAvailable = false;
 bool connectionLost = false;
-bool noAuRe_ThSp = false;
-bool allowNtp = true;
 bool allowLightAlarm = true;
 bool allowMovementAlarm = true;
 
-bool wifiAvailable = false;
+unsigned long connectionLostTime = 0;
+unsigned long movementAlarmDebounce = 30000;
 
 unsigned long lastPingTime = 0;
-unsigned long connectionLostTime = 0;
+unsigned long lastThingSpeakTime = 0;
+unsigned long lastNTPpullTime = 0;
 unsigned long lastMovementMillis = 0;
-unsigned long movementAlarmDebounce = 30000;
+unsigned long lastSensorsTime = 0;
 
 const int uploadInterval = 15000;
 const int sensorsInterval = 250;
+const int pingInteval = 60000;
 const int ntpInterval = 2000;
-const int secondInterval = 1000;
 
 const char* thinkSpeakAPIurl = "api.thingspeak.com"; // "184.106.153.149" or api.thingspeak.com
 const char* autoRemoteURL = "autoremotejoaomgcd.appspot.com";
@@ -154,24 +156,18 @@ void handleOTA() {
 }
 
 bool pingStatus() {
-    lastPingTime = millis();
-
     IPAddress ipThingSpeak (184, 106, 153, 149);
     IPAddress ipGoogle (8, 8, 8, 8);
 
     bool pingRet;    
     pingRet = Ping.ping(ipThingSpeak);
 
-    if (pingRet) {
-        return true;
-    } else {
+    if (!pingRet) {
         pingRet = Ping.ping(ipGoogle);
-
-        if (pingRet) {
-            return true;
-        }
     }
-    return false;
+
+    lastPingTime = millis();
+    return pingRet;
 }
 
 void sendToAutoRemote(char message[], char deviceKey[], char password[]) {
@@ -248,6 +244,7 @@ void thingSpeakRequest(int lightLevel, bool movementStatus) {
         }
         digitalWrite(ESPLED, HIGH);
     }
+    lastThingSpeakTime = millis();
 }
 
 void handle_OnConnect() {
@@ -338,6 +335,7 @@ void pullNTPtime(bool printData) {
             // Serial.println(timeClient.getSeconds());
             Serial.println(timeClient.getFormattedTime()); // format time like 23:05:00
         }
+        lastNTPpullTime = millis();
     }
 }
 
@@ -357,25 +355,21 @@ void loop(){
     ArduinoOTA.handle();
     server.handleClient();
 
-    unsigned long currentMillis = millis();
-
     // read sensors
-    if (currentMillis % sensorsInterval == 0) {
+    if (millis() > lastSensorsTime + sensorsInterval) {
         analogValue = analogRead(ANLG_IN);
         analogValue = map(analogValue, 0, 1024, 1024, 0);
         movement = digitalRead(PIR_IN);
+        if (movement) {
+            tempMove = true;
+        }
+        lastSensorsTime = millis();
     }
 
-    if (movement) {
-        tempMove = true;
-    }
-
-    // handle LEDs
+    // PIR led handler
     digitalWrite(PCBLED, !movement);
-    // (movement) ? digitalWrite(PCBLED, LOW) : digitalWrite(PCBLED, HIGH);
-    // (analogValue > analogThreshold) ? digitalWrite(PCBLED, LOW) : digitalWrite(PCBLED, HIGH);
 
-    // AutoRemote report
+    // AutoRemote LIGHT
     if ((analogValue > analogThreshold) && allowLightAlarm) {
         Serial.print("WARNING: light detected! (");
         Serial.print(analogValue);
@@ -387,39 +381,58 @@ void loop(){
         allowLightAlarm = true;
     }
 
+    // AutoRemote MOVEMENT
     if (movement && allowMovementAlarm) {
         Serial.println("WARNING: movement detected!\r\n");
         sendToAutoRemote("alarm_movement", autoRemotePlus6, autoRemotePass);
         allowMovementAlarm = false;
         lastMovementMillis = millis();
     }
-    if ((currentMillis >= (lastMovementMillis + movementAlarmDebounce)) && !allowMovementAlarm) {
+    if ((millis() >= (lastMovementMillis + movementAlarmDebounce)) && !allowMovementAlarm) {
         allowMovementAlarm = true;
     }
 
     // pull the time
-    if ((currentMillis % ntpInterval == 0) && allowNtp && wifiAvailable) {
+    if ((millis() > lastNTPpullTime + ntpInterval) && wifiAvailable) {
         pullNTPtime(false);
-        allowNtp = false;
     }
 
     // upload data to ThingSpeak
-    if (currentMillis % uploadInterval == 0) {
+    if (millis() > lastThingSpeakTime + uploadInterval) {
         serialPrintAll(analogValue, tempMove);
         thingSpeakRequest(analogValue, tempMove);
         tempMove = false;
     }
 
-    // debounce per second
-    if (currentMillis % secondInterval == 0) {
-        allowNtp = true;
+    // check Internet connectivity
+    if (millis() > lastPingTime + pingInteval) {
+        pingResult = pingStatus();
+        Serial.print("\r\nPing status: ");
+        Serial.println((String)pingResult);
+        Serial.println("\r\n");
+
+        connectionLost = !pingResult;
+
+        if ((!pingResult) && (!connectionLost)) {
+            Serial.println("\r\nWARNING: no Internet connectivity!\r\n");
+            connectionLostTime = millis();
+            connectionLost = true;
+        }
+    }
+
+    // reboot if no Internet
+    if ((millis() > connectionLostTime + 300000) && connectionLost) {
+        if (!pingResult) {
+            Serial.println("No Internet connection. Rebooting in 5 sec...");
+            delay(5000);
+            ESP.restart();
+        }
     }
 
     // reboot device if no WiFi for 5 minutes (1h : 3600000)
-    if ((currentMillis > 300000) && (!wifiAvailable)) {
+    if ((millis() > 300000) && (!wifiAvailable)) {
         Serial.println("No WiFi connection. Rebooting in 5 sec...");
         delay(5000);
         ESP.restart();
     }
-
 }
