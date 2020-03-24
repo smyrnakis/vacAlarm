@@ -1,0 +1,17 @@
+Components:
+    Main board: ESP12E devkit
+    Sensors:
+        - mini PIR (PIR)
+        - photoresistor (PR)
+    Other:
+        - resistor 2k2 Ω (R)
+
+Wiring:
+    PR1 --> GND
+    PR2 --> AD0
+    AD0 --> R1
+    Vcc --> R2
+
+    PIR- --> GND
+    PIR+ --> Vcc
+    PIRin -> D1
