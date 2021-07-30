@@ -10,10 +10,10 @@
 #include <ESP8266Ping.h>
 #include "secrets.h"
 
-#define PCBLED D0 // 16 , LED_BUILTIN
+// #define PCBLED D0 // 16 , LED_BUILTIN
 #define ESPLED D4 // 2
 #define ANLG_IN A0
-#define PIR_IN D1
+#define PIR_IN D2
 
 
 char defaultSSID[] = WIFI_DEFAULT_SSID;
@@ -36,7 +36,7 @@ String formatedTime;
 bool movement = false;
 bool tempMove = false;
 int analogValue = 0;
-int analogThreshold = 40; 
+int analogThreshold = 50; 
 
 bool noAuRe_ThSp = false;       // for debugging
 bool pingResult = true;
@@ -63,7 +63,9 @@ const char* thinkSpeakAPIurl = "api.thingspeak.com"; // "184.106.153.149" or api
 const char* autoRemoteURL = "autoremotejoaomgcd.appspot.com";
 
 // Network Time Protocol
-const long utcOffsetInSeconds = 3600; // 1H (3600) for winter time / 2H (7200) for summer time
+// 1H (3600) for winter time / 2H (7200) for summer time (CH)
+// 1H (7200) for winter time / 2H (10800) for summer time (GR)
+const long utcOffsetInSeconds = 10800;
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 
 ESP8266WebServer server(80);
@@ -74,11 +76,11 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
 
 
 void setup() {
-    pinMode(PCBLED, OUTPUT);
+    // pinMode(PCBLED, OUTPUT);
     pinMode(ESPLED, OUTPUT);
     pinMode(PIR_IN, INPUT);
 
-    digitalWrite(PCBLED, HIGH);
+    // digitalWrite(PCBLED, HIGH);
     digitalWrite(ESPLED, HIGH);
 
     // attachInterrupt(digitalPinToInterrupt(PIR_IN), movementDetected, CHANGE); // LOW
@@ -92,7 +94,6 @@ void setup() {
     wifiManager.autoConnect(defaultSSID, defaultPASS);
 
     server.on("/", handle_OnConnect);
-    server.on("/about", handle_OnConnectAbout);
     server.onNotFound(handle_NotFound);
 
     server.begin();
@@ -253,19 +254,13 @@ void handle_OnConnect() {
     digitalWrite(ESPLED, HIGH);
 }
 
-void handle_OnConnectAbout() {
-    digitalWrite(ESPLED, LOW);
-    server.send(200, "text/plain", "A smart vacation alarm system! (C) Apostolos Smyrnakis");
-    digitalWrite(ESPLED, HIGH);
-}
-
 void handle_NotFound(){
     server.send(404, "text/html", HTMLnotFound());
 }
 
 String HTMLpresentData(int lightLvl, bool movementStatus){
     String ptr = "<!DOCTYPE html> <html>\n";
-    ptr +="<meta http-equiv=\"refresh\" content=\"6\" >\n";
+    ptr +="<meta http-equiv=\"refresh\" content=\"5\" >\n";
     ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
     ptr +="<title>vacAlarm</title>\n";
     ptr +="<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}\n";
@@ -367,7 +362,7 @@ void loop(){
     }
 
     // PIR led handler
-    digitalWrite(PCBLED, !movement);
+    // digitalWrite(PCBLED, !movement);
 
     // AutoRemote LIGHT
     if ((analogValue > analogThreshold) && allowLightAlarm) {
@@ -423,16 +418,16 @@ void loop(){
     // reboot if no Internet
     if ((millis() > connectionLostTime + 300000) && connectionLost) {
         if (!pingResult) {
-            Serial.println("No Internet connection. Rebooting in 5 sec...");
-            delay(5000);
+            Serial.println("No Internet connection. Rebooting in 2 sec...");
+            delay(2000);
             ESP.restart();
         }
     }
 
     // reboot device if no WiFi for 5 minutes (1h : 3600000)
     if ((millis() > 300000) && (!wifiAvailable)) {
-        Serial.println("No WiFi connection. Rebooting in 5 sec...");
-        delay(5000);
+        Serial.println("No WiFi connection. Rebooting in 2 sec...");
+        delay(2000);
         ESP.restart();
     }
 }
