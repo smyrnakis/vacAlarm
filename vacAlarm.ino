@@ -1,3 +1,25 @@
+/*
+    HARDWARE CONNECTION
+
+    R_2K2_1 --> 3V3
+    R_2K2_2 --> A0
+
+    PR_1    --> A0
+    PR_2    --> GND
+
+    PIR_+   --> 5V
+    PIR_OUT --> R_10K_1
+    PIR_-   --> GND
+
+    R_10K_2 --> D2
+
+    LED_+   --> R_390_1
+    LED_-   --> GND
+
+    R_390_2 --> 5V
+*/
+
+
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 // #include <ESP8266HTTPClient.h>
@@ -42,22 +64,27 @@ bool noAuRe_ThSp = false;       // for debugging
 bool pingResult = true;
 bool wifiAvailable = false;
 bool connectionLost = false;
-bool allowLightAlarm = true;
+bool allowLightAlarm = false;
 bool allowMovementAlarm = true;
 
 unsigned long connectionLostTime = 0;
 unsigned long movementAlarmDebounce = 30000;
 
 unsigned long lastPingTime = 0;
+unsigned long lastWiFiCheckTime = 0;
 unsigned long lastThingSpeakTime = 0;
 unsigned long lastNTPpullTime = 0;
 unsigned long lastMovementMillis = 0;
 unsigned long lastSensorsTime = 0;
 
 const int uploadInterval = 15000;
-const int sensorsInterval = 250;
-const int pingInteval = 60000;
-const int ntpInterval = 2000;
+const int sensorsInterval = 500;
+const int ntpInterval = 60000;
+unsigned int pingInteval = 120000;
+unsigned int wifiCheckInteval = 120000;
+
+const int ledIntervalERR = 1000;
+const int ledIntervalOK = 5000;
 
 const char* thinkSpeakAPIurl = "api.thingspeak.com"; // "184.106.153.149" or api.thingspeak.com
 const char* autoRemoteURL = "autoremotejoaomgcd.appspot.com";
@@ -173,7 +200,7 @@ bool pingStatus() {
 
 void sendToAutoRemote(char message[], char deviceKey[], char password[]) {
     if (wifiAvailable && !noAuRe_ThSp) {
-        digitalWrite(ESPLED, LOW);
+        // digitalWrite(ESPLED, LOW);
         client.stop();
         if (client.connect(autoRemoteURL,80)) {
             String url = "/sendmessage?key=";
@@ -211,13 +238,13 @@ void sendToAutoRemote(char message[], char deviceKey[], char password[]) {
         else {
             Serial.println("ERROR: could not send data to AutoRemote!");
         }
-        digitalWrite(ESPLED, HIGH);
+        // digitalWrite(ESPLED, HIGH);
     }
 }
 
 void thingSpeakRequest(int lightLevel, bool movementStatus) {
     if (wifiAvailable && !noAuRe_ThSp) {
-        digitalWrite(ESPLED, LOW);
+        // digitalWrite(ESPLED, LOW);
         client.stop();
         if (client.connect(thinkSpeakAPIurl,80)) 
         {
@@ -243,15 +270,15 @@ void thingSpeakRequest(int lightLevel, bool movementStatus) {
         else {
             Serial.println("ERROR: could not upload data to thingspeak!");
         }
-        digitalWrite(ESPLED, HIGH);
+        // digitalWrite(ESPLED, HIGH);
     }
     lastThingSpeakTime = millis();
 }
 
 void handle_OnConnect() {
-    digitalWrite(ESPLED, LOW);
+    // digitalWrite(ESPLED, LOW);
     server.send(200, "text/html", HTMLpresentData(analogValue, movement));
-    digitalWrite(ESPLED, HIGH);
+    // digitalWrite(ESPLED, HIGH);
 }
 
 void handle_NotFound(){
@@ -342,6 +369,12 @@ void serialPrintAll(int lightLevel, bool movementStatus) {
     Serial.print("Movement: ");
     Serial.print(String(movementStatus));
     Serial.println(" [0/1]");
+    Serial.print("WiFi status: ");
+    Serial.print((String)wifiAvailable);
+    Serial.println(" [0/1]");
+    Serial.print("Ping OK: ");
+    Serial.print((String)pingResult);
+    Serial.println(" [0/1]");
     // Serial.println(" ms");
     Serial.println();
 }
@@ -389,34 +422,56 @@ void loop(){
 
     // pull the time
     if ((millis() > lastNTPpullTime + ntpInterval) && wifiAvailable) {
-        pullNTPtime(false);
+        if ((!connectionLost) && (wifiAvailable)) {
+            pullNTPtime(false);
+        }
     }
 
     // upload data to ThingSpeak
     if (millis() > lastThingSpeakTime + uploadInterval) {
         serialPrintAll(analogValue, tempMove);
-        thingSpeakRequest(analogValue, tempMove);
-        tempMove = false;
+        if ((!connectionLost) && (wifiAvailable)) {
+            thingSpeakRequest(analogValue, tempMove);
+        }
+        // tempMove = false;
+        if (!movement) {
+            tempMove = false;
+        }
+    }
+
+    // check WiFi status
+    if (millis() > lastWiFiCheckTime + wifiCheckInteval) {
+        if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+            wifiCheckInteval = 30000;
+            wifiAvailable = false;
+        }
+        else {
+            wifiCheckInteval = 120000;
+            wifiAvailable = true;
+        }
+
+        lastWiFiCheckTime = millis();
     }
 
     // check Internet connectivity
     if (millis() > lastPingTime + pingInteval) {
         pingResult = pingStatus();
-        Serial.print("\r\nPing status: ");
-        Serial.println((String)pingResult);
-        Serial.println("\r\n");
 
         connectionLost = !pingResult;
 
         if ((!pingResult) && (!connectionLost)) {
             Serial.println("\r\nWARNING: no Internet connectivity!\r\n");
             connectionLostTime = millis();
+            pingInteval = 30000;
             connectionLost = true;
+        }
+        else {
+            pingInteval = 120000;
         }
     }
 
     // reboot if no Internet
-    if ((millis() > connectionLostTime + 300000) && connectionLost) {
+    if ((millis() > connectionLostTime + 150000) && connectionLost) {
         if (!pingResult) {
             Serial.println("No Internet connection. Rebooting in 2 sec...");
             delay(2000);
@@ -424,10 +479,28 @@ void loop(){
         }
     }
 
-    // reboot device if no WiFi for 5 minutes (1h : 3600000)
-    if ((millis() > 300000) && (!wifiAvailable)) {
+    // reboot device if no WiFi for 2,5 minutes (1h : 3600000)
+    if ((millis() > 150000) && (!wifiAvailable)) {
         Serial.println("No WiFi connection. Rebooting in 2 sec...");
         delay(2000);
         ESP.restart();
+    }
+
+    // handle LED blinking
+    if ((connectionLost) || (!wifiAvailable)) {
+        if (millis() % ledIntervalERR == 0) {
+            digitalWrite(ESPLED, LOW);
+        }
+        else {
+            digitalWrite(ESPLED, HIGH);
+        }
+    }
+    else {
+        if (millis() % ledIntervalOK == 0) {
+            digitalWrite(ESPLED, LOW);
+        }
+        else {
+            digitalWrite(ESPLED, HIGH);
+        }
     }
 }
