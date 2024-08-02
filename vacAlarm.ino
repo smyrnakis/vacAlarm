@@ -13,15 +13,14 @@
 #define PCBLED D0 // 16 , LED_BUILTIN
 #define ESPLED D4 // 2
 #define ANLG_IN A0
-#define PIR_IN D1
+#define PIR_IN D2
 
 
 char defaultSSID[] = WIFI_DEFAULT_SSID;
 char defaultPASS[] = WIFI_DEFAULT_PASS;
 
 char apiKey[] = THINGSP_WR_APIKEY;
-char autoRemoteMac[] = AUTOREM_MAC;
-char autoRemotePlus6[] = AUTOREM_PLUS6;
+char autoRemoteKey[] = AUTOREM_KEY;
 char autoRemotePass[] = AUTOREM_PASS;
 char autoRemoteTTL[] = "15";
 
@@ -54,16 +53,16 @@ unsigned long lastNTPpullTime = 0;
 unsigned long lastMovementMillis = 0;
 unsigned long lastSensorsTime = 0;
 
-const int uploadInterval = 15000;
-const int sensorsInterval = 250;
-const int pingInteval = 60000;
-const int ntpInterval = 2000;
+const int uploadInterval = 30000;
+const int sensorsInterval = 500;
+const int pingInteval = 120000;
+const int ntpInterval = 60000;
 
 const char* thinkSpeakAPIurl = "api.thingspeak.com"; // "184.106.153.149" or api.thingspeak.com
 const char* autoRemoteURL = "autoremotejoaomgcd.appspot.com";
 
 // Network Time Protocol
-const long utcOffsetInSeconds = 3600; // 1H (3600) for winter time / 2H (7200) for summer time
+const long utcOffsetInSeconds = 7200; // 1H (3600) for winter time / 2H (7200) for summer time
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 
 ESP8266WebServer server(80);
@@ -248,15 +247,15 @@ void thingSpeakRequest(int lightLevel, bool movementStatus) {
 }
 
 void handle_OnConnect() {
-    digitalWrite(ESPLED, LOW);
+    // digitalWrite(ESPLED, LOW);
     server.send(200, "text/html", HTMLpresentData(analogValue, movement));
-    digitalWrite(ESPLED, HIGH);
+    // digitalWrite(ESPLED, HIGH);
 }
 
 void handle_OnConnectAbout() {
-    digitalWrite(ESPLED, LOW);
+    // digitalWrite(ESPLED, LOW);
     server.send(200, "text/plain", "A smart vacation alarm system! (C) Apostolos Smyrnakis");
-    digitalWrite(ESPLED, HIGH);
+    // digitalWrite(ESPLED, HIGH);
 }
 
 void handle_NotFound(){
@@ -374,7 +373,8 @@ void loop(){
         Serial.print("WARNING: light detected! (");
         Serial.print(analogValue);
         Serial.println("/1024)\r\n");
-        sendToAutoRemote("alarm_light", autoRemotePlus6, autoRemotePass);
+        char eventStr[] = "alarm_light";
+        sendToAutoRemote(eventStr, autoRemoteKey, autoRemotePass);
         allowLightAlarm = false;
     }
     if ((analogValue < analogThreshold) && !allowLightAlarm) {
@@ -384,7 +384,8 @@ void loop(){
     // AutoRemote MOVEMENT
     if (movement && allowMovementAlarm) {
         Serial.println("WARNING: movement detected!\r\n");
-        sendToAutoRemote("alarm_movement", autoRemotePlus6, autoRemotePass);
+        char eventStr[] = "alarm_movement";
+        sendToAutoRemote(eventStr, autoRemoteKey, autoRemotePass);
         allowMovementAlarm = false;
         lastMovementMillis = millis();
     }
